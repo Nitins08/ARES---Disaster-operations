@@ -1,12 +1,15 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { Incident } from '../types';
+import { isValidCoordinate, copyCoordinatesToClipboard } from '../lib/geoUtils';
+import { Navigation, Copy, Check, Clock, AlertTriangle } from 'lucide-react';
 
 interface LeafletMapProps {
   incidents?: Incident[];
   selectedIncident?: Incident | null;
   onSelectIncident?: (incident: Incident) => void;
+  onNavigateIncident?: (incident: Incident) => void;
   // Picker mode for Report portal
   isPickerMode?: boolean;
   pickerLocation?: { lat: number; lng: number } | null;
@@ -127,17 +130,31 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   incidents = [],
   selectedIncident,
   onSelectIncident,
+  onNavigateIncident,
   isPickerMode = false,
   pickerLocation,
   onPickerLocationChange,
   center = [13.0827, 80.2707], // Default city center (Chennai/Emergency center)
   zoom = 12,
 }) => {
-  const activeCenter: [number, number] = selectedIncident && selectedIncident.latitude && selectedIncident.longitude
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const hasSelectedValidCoords = selectedIncident && isValidCoordinate(selectedIncident.latitude, selectedIncident.longitude);
+  const activeCenter: [number, number] = hasSelectedValidCoords
     ? [selectedIncident.latitude, selectedIncident.longitude]
     : pickerLocation
     ? [pickerLocation.lat, pickerLocation.lng]
     : center;
+
+  const handleCopyCoords = async (e: React.MouseEvent, inc: Incident) => {
+    e.stopPropagation();
+    if (!isValidCoordinate(inc.latitude, inc.longitude)) return;
+    const ok = await copyCoordinatesToClipboard(inc.latitude, inc.longitude);
+    if (ok) {
+      setCopiedId(inc.id);
+      setTimeout(() => setCopiedId(null), 2500);
+    }
+  };
 
   return (
     <div className="w-full h-full relative rounded-lg overflow-hidden border border-slate-200 shadow-inner bg-slate-100">
@@ -154,7 +171,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {selectedIncident && selectedIncident.latitude && (
+        {hasSelectedValidCoords && (
           <MapRecenter target={[selectedIncident.latitude, selectedIncident.longitude]} />
         )}
 
@@ -191,7 +208,8 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         {/* Incident Queue Markers for Console */}
         {!isPickerMode &&
           incidents.map((inc) => {
-            if (!inc.latitude || !inc.longitude) return null;
+            // Strict check: DO NOT place a guessed marker if coordinates are missing or invalid
+            if (!isValidCoordinate(inc.latitude, inc.longitude)) return null;
             const icon = createPriorityIcon(inc.priority_level);
 
             return (
@@ -204,7 +222,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
                 }}
               >
                 <Popup>
-                  <div className="p-1 max-w-[240px]">
+                  <div className="p-1 max-w-[260px] text-slate-800">
                     {inc.primary_image_url && (
                       <div className="w-full h-16 rounded overflow-hidden mb-1.5 bg-slate-900 border border-slate-200">
                         <img
@@ -250,25 +268,58 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
                       {inc.what_happened || inc.why_this_rank}
                     </p>
 
-                    <p className="text-[10px] text-[#64748B] truncate mb-1">
-                      📍 {inc.address_summary || 'Coordinates provided'}
-                    </p>
-
-                    {/* People Affected */}
-                    <div className="text-[10px] font-medium text-[#111827] mb-2">
-                      {inc.people_at_risk > 0 ? (
-                        <span className="font-bold text-[#DC2626]">⚠️ {inc.people_at_risk} people affected</span>
-                      ) : (
-                        <span className="text-[#64748B]">People affected: Unknown</span>
-                      )}
+                    {/* Saved GPS Coordinates & Copy */}
+                    <div className="bg-slate-100 p-1.5 rounded border border-slate-200 mb-1.5 flex items-center justify-between gap-1 text-[10px] font-mono">
+                      <div>
+                        <span className="text-slate-500 text-[9px] block font-sans font-semibold">DEVICE GPS:</span>
+                        <span className="font-bold text-slate-900">{inc.latitude.toFixed(5)}, {inc.longitude.toFixed(5)}</span>
+                      </div>
+                      <button
+                        onClick={(e) => handleCopyCoords(e, inc)}
+                        className="px-1.5 py-0.5 rounded bg-white border border-slate-300 hover:bg-slate-50 text-[10px] font-sans font-medium flex items-center gap-0.5"
+                        title="Copy exact latitude, longitude"
+                      >
+                        {copiedId === inc.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            <span className="text-emerald-700">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3 text-slate-500" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
                     </div>
 
-                    <button
-                      onClick={() => onSelectIncident && onSelectIncident(inc)}
-                      className="w-full text-center py-1.5 bg-[#0F766E] hover:bg-[#0d655e] text-white text-xs font-semibold rounded-lg shadow-xs transition"
-                    >
-                      View Complete Incident Details
-                    </button>
+                    {/* Location Freshness and Real-time Disclaimer */}
+                    <div className="text-[9px] text-slate-500 bg-amber-50 border border-amber-200 p-1 rounded mb-2 flex items-start gap-1">
+                      <Clock className="w-3 h-3 text-amber-700 shrink-0 mt-0.5" />
+                      <span>
+                        Reported: {new Date(inc.created_at).toLocaleTimeString()} (Static snapshot at dispatch — not live tracking)
+                      </span>
+                    </div>
+
+                    {/* Action Buttons: Navigate to Incident & View Details */}
+                    <div className="flex flex-col gap-1">
+                      {onNavigateIncident && (
+                        <button
+                          onClick={() => onNavigateIncident(inc)}
+                          className="w-full text-center py-1.5 bg-[#DC2626] hover:bg-[#b91c1c] text-white text-xs font-bold rounded-lg shadow-xs transition flex items-center justify-center gap-1.5 active:scale-95"
+                        >
+                          <Navigation className="w-3.5 h-3.5" />
+                          <span>Navigate to Incident</span>
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => onSelectIncident && onSelectIncident(inc)}
+                        className="w-full text-center py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg transition"
+                      >
+                        View Review Details
+                      </button>
+                    </div>
                   </div>
                 </Popup>
               </Marker>

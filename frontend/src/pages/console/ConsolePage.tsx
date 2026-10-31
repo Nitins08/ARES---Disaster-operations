@@ -5,6 +5,7 @@ import { Incident, UserRole } from '../../types';
 import { LeafletMap } from '../../components/LeafletMap';
 import { PriorityList } from './PriorityList';
 import { RescuerReviewPanel } from './RescuerReviewPanel';
+import { RescueNavigationModal } from '../../components/RescueNavigationModal';
 import { Map, ListFilter, Search, AlertCircle } from 'lucide-react';
 
 interface ConsolePageProps {
@@ -15,6 +16,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({ role }) => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'map' | 'list'>('map');
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
+  const [navigatingIncident, setNavigatingIncident] = useState<Incident | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [disasterFilter, setDisasterFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -187,6 +189,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({ role }) => {
                   incidents={filteredIncidents}
                   selectedIncident={selectedIncident}
                   onSelectIncident={(inc) => setSelectedIncident(inc)}
+                  onNavigateIncident={(inc) => setNavigatingIncident(inc)}
                 />
               </div>
 
@@ -204,6 +207,11 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({ role }) => {
                     }}
                     allIncidents={incidents}
                     onClose={() => setSelectedIncident(null)}
+                    onNavigateIncident={(inc) => setNavigatingIncident(inc)}
+                    onViewOnMap={(inc) => {
+                      setSelectedIncident(inc);
+                      setActiveTab('map');
+                    }}
                   />
                 </div>
               )}
@@ -224,6 +232,11 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({ role }) => {
               onDisasterFilterChange={setDisasterFilter}
               searchQuery={searchQuery}
               onSearchQueryChange={setSearchQuery}
+              onNavigateIncident={(inc) => setNavigatingIncident(inc)}
+              onViewOnMap={(inc) => {
+                setSelectedIncident(inc);
+                setActiveTab('map');
+              }}
             />
 
             {/* Slide-over Detailed Report Panel when an incident is opened from the Priority List */}
@@ -240,12 +253,24 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({ role }) => {
                   }}
                   allIncidents={incidents}
                   onClose={() => setSelectedIncident(null)}
+                  onNavigateIncident={(inc) => setNavigatingIncident(inc)}
+                  onViewOnMap={(inc) => {
+                    setSelectedIncident(inc);
+                    setActiveTab('map');
+                  }}
                 />
               </div>
             )}
           </div>
         )}
       </div>
+
+      {/* Rescue Turn-by-Turn Navigation Modal */}
+      <RescueNavigationModal
+        isOpen={!!navigatingIncident}
+        onClose={() => setNavigatingIncident(null)}
+        incident={navigatingIncident}
+      />
     </div>
   );
 };

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Incident } from '../../types';
+import { isValidCoordinate, copyCoordinatesToClipboard } from '../../lib/geoUtils';
 import {
   AlertTriangle,
   Users,
@@ -19,7 +20,11 @@ import {
   HeartHandshake,
   FileText,
   Radio,
-  ShieldCheck
+  ShieldCheck,
+  Navigation,
+  Map,
+  Copy,
+  Check
 } from 'lucide-react';
 
 interface PriorityListProps {
@@ -32,6 +37,8 @@ interface PriorityListProps {
   onDisasterFilterChange: (type: string) => void;
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
+  onNavigateIncident?: (inc: Incident) => void;
+  onViewOnMap?: (inc: Incident) => void;
 }
 
 export const PriorityList: React.FC<PriorityListProps> = ({
@@ -44,7 +51,20 @@ export const PriorityList: React.FC<PriorityListProps> = ({
   onDisasterFilterChange,
   searchQuery,
   onSearchQueryChange,
+  onNavigateIncident,
+  onViewOnMap,
 }) => {
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const handleCopyCoords = async (e: React.MouseEvent, inc: Incident) => {
+    e.stopPropagation();
+    if (!isValidCoordinate(inc.latitude, inc.longitude)) return;
+    const ok = await copyCoordinatesToClipboard(inc.latitude, inc.longitude);
+    if (ok) {
+      setCopiedId(inc.id);
+      setTimeout(() => setCopiedId(null), 2500);
+    }
+  };
   // Filter incidents by search query, status, and disaster category
   const filtered = incidents.filter((inc) => {
     if (statusFilter !== 'all' && inc.status !== statusFilter) return false;
@@ -303,17 +323,55 @@ export const PriorityList: React.FC<PriorityListProps> = ({
                       </p>
                     </div>
 
-                    {/* 3. Exact Location */}
-                    <div className="flex items-center gap-1.5 text-xs text-[#111827] font-medium">
-                      <MapPin className="w-3.5 h-3.5 text-[#DC2626] shrink-0" />
-                      <span className="font-semibold text-[#111827] truncate">
-                        Location: {inc.address_summary || 'Coordinates provided'}
-                      </span>
-                      {inc.latitude && inc.longitude && (
-                        <span className="text-[11px] text-[#64748B] font-mono font-normal shrink-0">
-                          ({inc.latitude.toFixed(4)}, {inc.longitude.toFixed(4)})
+                    {/* 3. Exact Location & GPS Coordinates */}
+                    <div className="flex flex-col gap-1 text-xs">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 font-medium text-[#111827]">
+                          <MapPin className="w-3.5 h-3.5 text-[#DC2626] shrink-0" />
+                          <span className="font-semibold text-[#111827] truncate">
+                            {inc.address_summary || 'Coordinates provided'}
+                          </span>
+                        </div>
+
+                        {isValidCoordinate(inc.latitude, inc.longitude) ? (
+                          <div className="flex items-center gap-1.5 bg-[#F3F4F6] px-2 py-0.5 rounded-md border border-[#E5E7EB]">
+                            <span className="text-[11px] text-[#111827] font-mono font-bold">
+                              GPS: {inc.latitude.toFixed(6)}, {inc.longitude.toFixed(6)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyCoords(e, inc)}
+                              className="text-[10px] font-sans font-semibold text-[#0F766E] hover:text-[#0d655e] flex items-center gap-0.5 pl-1 border-l border-[#D1D5DB]"
+                              title="Copy exact coordinates"
+                            >
+                              {copiedId === inc.id ? (
+                                <>
+                                  <Check className="w-3 h-3 text-[#047857]" />
+                                  <span className="text-[#047857]">Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3 text-[#64748B]" />
+                                  <span>Copy</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#DC2626] bg-[#FEF2F2] px-2 py-0.5 rounded border border-[#FECACA]">
+                            <AlertTriangle className="w-3 h-3 text-[#DC2626]" />
+                            Exact location unavailable
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Location Freshness and Accuracy Notice */}
+                      <div className="text-[10px] text-[#64748B] flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-[#94A3B8] shrink-0" />
+                        <span>
+                          Reported at SOS dispatch: {new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} • Static snapshot (not live tracking)
                         </span>
-                      )}
+                      </div>
                     </div>
 
                     {/* Priority Rationale Note */}
@@ -344,7 +402,7 @@ export const PriorityList: React.FC<PriorityListProps> = ({
                   )}
                 </div>
 
-                {/* Bottom Row: 6. Immediate Needs, 7. Hazards & Action Button */}
+                {/* Bottom Row: 6. Immediate Needs, 7. Hazards & Action Buttons */}
                 <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#E5E7EB] text-xs flex-wrap">
                   <div className="flex items-center gap-4 flex-wrap">
                     {/* 6. Immediate Needs */}
@@ -387,11 +445,51 @@ export const PriorityList: React.FC<PriorityListProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 ml-auto">
-                    <span className="text-[11px] text-[#64748B]">
-                      {new Date(inc.created_at).toLocaleTimeString()}
-                    </span>
+                  {/* Actions: Navigate to Incident, View on Map, Review Details */}
+                  <div className="flex items-center gap-1.5 ml-auto flex-wrap">
+                    {onNavigateIncident && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isValidCoordinate(inc.latitude, inc.longitude)) {
+                            onNavigateIncident(inc);
+                          }
+                        }}
+                        disabled={!isValidCoordinate(inc.latitude, inc.longitude)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 active:scale-95 shadow-xs ${
+                          isValidCoordinate(inc.latitude, inc.longitude)
+                            ? 'bg-[#DC2626] hover:bg-[#b91c1c] text-white'
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                        }`}
+                        title={
+                          isValidCoordinate(inc.latitude, inc.longitude)
+                            ? `Navigate to ${inc.latitude.toFixed(5)}, ${inc.longitude.toFixed(5)}`
+                            : 'Exact coordinates unavailable for navigation'
+                        }
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                        <span>Navigate</span>
+                      </button>
+                    )}
+
+                    {onViewOnMap && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onViewOnMap(inc);
+                        }}
+                        className="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-[#E5E7EB] text-[#111827] font-semibold text-xs rounded-lg shadow-2xs transition flex items-center gap-1 active:scale-95"
+                        title="Locate marker on map"
+                      >
+                        <Map className="w-3.5 h-3.5 text-[#0F766E]" />
+                        <span>View on Map</span>
+                      </button>
+                    )}
+
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectIncident(inc);

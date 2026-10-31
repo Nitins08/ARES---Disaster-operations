@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Incident, UserRole } from '../../types';
 import { ImageAnnotator } from '../../components/ImageAnnotator';
+import { isValidCoordinate, copyCoordinatesToClipboard } from '../../lib/geoUtils';
 import {
   CheckCircle,
   AlertTriangle,
@@ -27,7 +28,9 @@ import {
   CheckCircle2,
   Clock,
   Radio,
-  Check
+  Check,
+  Navigation,
+  Map
 } from 'lucide-react';
 
 interface RescuerReviewPanelProps {
@@ -46,6 +49,8 @@ interface RescuerReviewPanelProps {
   onManualMerge: (targetId: number, sourceId: number, reason: string) => Promise<void>;
   allIncidents: Incident[];
   onClose?: () => void;
+  onNavigateIncident?: (inc: Incident) => void;
+  onViewOnMap?: (inc: Incident) => void;
 }
 
 const getDisasterIcon = (type: string) => {
@@ -72,6 +77,8 @@ export const RescuerReviewPanel: React.FC<RescuerReviewPanelProps> = ({
   onManualMerge,
   allIncidents,
   onClose,
+  onNavigateIncident,
+  onViewOnMap,
 }) => {
   const [selectedSeverity, setSelectedSeverity] = useState<number>(3);
   const [newHazard, setNewHazard] = useState('');
@@ -81,6 +88,7 @@ export const RescuerReviewPanel: React.FC<RescuerReviewPanelProps> = ({
   const [coordinatorNote, setCoordinatorNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'review' | 'reports' | 'audit'>('review');
+  const [copiedLocation, setCopiedLocation] = useState(false);
 
   if (!incident) {
     return (
@@ -282,24 +290,101 @@ export const RescuerReviewPanel: React.FC<RescuerReviewPanelProps> = ({
                   </div>
                 </div>
 
-                {/* 3. Exact Location */}
-                <div className="col-span-2 p-2.5 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] flex flex-col">
+                {/* 3. Exact Incident Location & Rescue Navigation */}
+                <div className="col-span-2 p-3 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] flex flex-col gap-2 shadow-2xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-[#64748B] uppercase flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-[#0F766E]" />
-                      3. Exact Location
+                    <span className="text-[10px] font-bold text-[#64748B] uppercase flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-[#DC2626]" />
+                      3. Exact Incident Location (Reported at SOS)
                     </span>
                     <span className="text-[10px] font-semibold text-[#047857]">
-                      {incident.reports?.[0]?.is_gps ? '✓ Device GPS Verified' : 'Approximate Pin / Reported'}
+                      {incident.reports?.[0]?.is_gps ? '✓ Device GPS Sensor Verified' : 'Reported pin'}
                     </span>
                   </div>
-                  <p className="mt-1 font-semibold text-[#111827] text-xs">
-                    {incident.address_summary || 'Coordinates provided'}
-                  </p>
-                  {incident.latitude && incident.longitude && (
-                    <span className="text-[10px] text-[#64748B] font-mono mt-0.5">
-                      GPS: {incident.latitude.toFixed(5)}, {incident.longitude.toFixed(5)}
-                    </span>
+
+                  {isValidCoordinate(incident.latitude, incident.longitude) ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 bg-white p-2 rounded-lg border border-[#E5E7EB]">
+                        <div>
+                          <p className="font-mono text-sm font-bold text-[#111827]">
+                            {incident.latitude.toFixed(6)}, {incident.longitude.toFixed(6)}
+                          </p>
+                          <p className="text-[11px] text-[#64748B] font-medium mt-0.5">
+                            {incident.address_summary || 'Coordinates provided by citizen device'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = await copyCoordinatesToClipboard(incident.latitude, incident.longitude);
+                            if (ok) {
+                              setCopiedLocation(true);
+                              setTimeout(() => setCopiedLocation(false), 2500);
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#111827] text-xs font-semibold flex items-center gap-1 transition"
+                          title="Copy exact coordinates to clipboard"
+                        >
+                          {copiedLocation ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <span className="text-emerald-700">Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5 text-[#64748B]" />
+                              <span>Copy Coordinates</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Location Freshness and Real-Time Disclaimer */}
+                      <div className="bg-amber-50/80 border border-amber-200/80 rounded-lg p-2 text-[10px] text-amber-900 flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1 font-semibold">
+                          <Clock className="w-3 h-3 text-amber-700" />
+                          <span>Captured: {new Date(incident.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' })}</span>
+                        </div>
+                        <p className="text-[9px] text-amber-800">
+                          <strong>Notice:</strong> This is a static snapshot captured when the person sent SOS. Real-time live tracking is <strong>not</strong> active.
+                        </p>
+                      </div>
+
+                      {/* Rescue Actions: Navigate & Map */}
+                      <div className="flex items-center gap-2 pt-1">
+                        {onNavigateIncident && (
+                          <button
+                            type="button"
+                            onClick={() => onNavigateIncident(incident)}
+                            className="flex-1 py-2 px-3 bg-[#DC2626] hover:bg-[#b91c1c] text-white text-xs font-bold rounded-lg shadow-sm flex items-center justify-center gap-1.5 transition active:scale-95"
+                          >
+                            <Navigation className="w-4 h-4" />
+                            <span>Navigate to Incident</span>
+                          </button>
+                        )}
+                        {onViewOnMap && (
+                          <button
+                            type="button"
+                            onClick={() => onViewOnMap(incident)}
+                            className="py-2 px-3 bg-white hover:bg-slate-50 border border-[#E5E7EB] text-[#111827] text-xs font-semibold rounded-lg shadow-2xs flex items-center justify-center gap-1 transition"
+                            title="Locate pin on the live tactical map"
+                          >
+                            <Map className="w-3.5 h-3.5 text-[#0F766E]" />
+                            <span>Locate on Map</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-red-800 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold text-xs">Exact location unavailable</p>
+                        <p className="text-[11px] text-red-700 mt-0.5">
+                          GPS coordinates were not captured from the device when SOS was filed. Guessed coordinates are not used to prevent routing errors.
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
 
