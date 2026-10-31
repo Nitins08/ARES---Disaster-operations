@@ -7,9 +7,10 @@ import { EmergencySosModal } from '../../components/EmergencySosModal';
 
 interface ReportPageProps {
   onNavigateToTracking?: (token: string) => void;
+  initialSosOpen?: boolean;
 }
 
-export const ReportPage: React.FC<ReportPageProps> = ({ onNavigateToTracking }) => {
+export const ReportPage: React.FC<ReportPageProps> = ({ onNavigateToTracking, initialSosOpen = false }) => {
   const [description, setDescription] = useState('');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export const ReportPage: React.FC<ReportPageProps> = ({ onNavigateToTracking }) 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedToken, setSubmittedToken] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isSosOpen, setIsSosOpen] = useState(false);
+  const [isSosOpen, setIsSosOpen] = useState(initialSosOpen || (typeof window !== 'undefined' && window.location.pathname === '/sos'));
 
   // Handle Photo selection
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {

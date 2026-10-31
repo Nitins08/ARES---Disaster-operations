@@ -15,16 +15,33 @@ interface DamageMapperDB extends DBSchema {
       created_at: number;
     };
   };
+  sos_dispatches: {
+    key: string;
+    value: {
+      id: string;
+      description: string;
+      latitude?: number;
+      longitude?: number;
+      accuracy?: number;
+      timestamp: string;
+      created_at: number;
+      recipients: string;
+      message_body: string;
+    };
+  };
 }
 
 const DB_NAME = 'damage-mapper-offline-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export async function getOfflineDB() {
   return openDB<DamageMapperDB>(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('offline_reports')) {
         db.createObjectStore('offline_reports', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('sos_dispatches')) {
+        db.createObjectStore('sos_dispatches', { keyPath: 'id' });
       }
     },
   });
@@ -57,4 +74,28 @@ export async function getPendingOfflineReports() {
 export async function removeOfflineReport(id: string) {
   const db = await getOfflineDB();
   return db.delete('offline_reports', id);
+}
+
+export async function saveSosDispatchOffline(dispatch: {
+  description: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  timestamp: string;
+  recipients: string;
+  message_body: string;
+}) {
+  const db = await getOfflineDB();
+  const id = `sos_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  await db.put('sos_dispatches', {
+    ...dispatch,
+    id,
+    created_at: Date.now(),
+  });
+  return id;
+}
+
+export async function getOfflineSosDispatches() {
+  const db = await getOfflineDB();
+  return db.getAll('sos_dispatches');
 }

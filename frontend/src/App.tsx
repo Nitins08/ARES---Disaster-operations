@@ -18,13 +18,13 @@ const queryClient = new QueryClient({
 });
 
 export function AppContent() {
-  const [currentRoute, setCurrentRoute] = useState<'report' | 'console' | 'tracking' | 'login'>('report');
+  const [currentRoute, setCurrentRoute] = useState<'report' | 'console' | 'tracking' | 'login' | 'sos'>('report');
   const [trackingToken, setTrackingToken] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(isAdminAuthenticated());
   const [isSeeding, setIsSeeding] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Sync with browser URL pathname or hash (e.g. /report, /console, /r/xyz, /login)
+  // Sync with browser URL pathname or hash (e.g. /report, /sos, /console, /r/xyz, /login)
   useEffect(() => {
     const handleLocation = () => {
       const path = window.location.pathname;
@@ -50,6 +50,8 @@ export function AppContent() {
         } else {
           setCurrentRoute('login');
         }
+      } else if (path === '/sos') {
+        setCurrentRoute('sos');
       } else {
         // Public Citizen Report Portal
         setCurrentRoute('report');
@@ -140,7 +142,7 @@ export function AppContent() {
   return (
     <div className={`bg-[#F9FAFB] text-[#111827] flex flex-col font-sans ${isConsole ? 'h-screen overflow-hidden' : 'min-h-screen'}`}>
       <Header
-        currentRoute={currentRoute}
+        currentRoute={currentRoute === 'sos' ? 'report' : currentRoute}
         onRouteChange={navigateTo}
         isAuthenticated={isAuthenticated}
         onLogout={handleLogout}
@@ -171,7 +173,12 @@ export function AppContent() {
             onNavigateToPublic={() => navigateTo('report')}
           />
         )}
-        {currentRoute === 'report' && <ReportPage onNavigateToTracking={navigateToTracking} />}
+        {(currentRoute === 'report' || currentRoute === 'sos') && (
+          <ReportPage
+            initialSosOpen={currentRoute === 'sos'}
+            onNavigateToTracking={navigateToTracking}
+          />
+        )}
         {currentRoute === 'tracking' && (
           <TrackingPage
             token={trackingToken}

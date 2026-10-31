@@ -16,7 +16,8 @@ import {
   ShieldAlert,
   Info
 } from 'lucide-react';
-import { SOS_PHONE_NUMBER, buildEmergencySmsUri } from '../config/sos';
+import { SOS_PHONE_NUMBER, SOS_PHONE_NUMBERS, buildEmergencySmsUri } from '../config/sos';
+import { saveSosDispatchOffline } from '../lib/offlineQueue';
 
 interface EmergencySosModalProps {
   isOpen: boolean;
@@ -43,6 +44,7 @@ export const EmergencySosModal: React.FC<EmergencySosModalProps> = ({
   const [locationError, setLocationError] = useState<string | null>(null);
   const [smsStatusMessage, setSmsStatusMessage] = useState<string | null>(null);
   const [isCooldown, setIsCooldown] = useState<boolean>(false);
+  const [selectedRecipient, setSelectedRecipient] = useState<string>(SOS_PHONE_NUMBER);
 
   // Initialize with any existing coords if passed
   useEffect(() => {
@@ -176,7 +178,18 @@ Please provide emergency assistance.`
     }
 
     const messageBody = generateSmsBody();
-    const smsUri = buildEmergencySmsUri(SOS_PHONE_NUMBER, messageBody);
+    const smsUri = buildEmergencySmsUri(selectedRecipient || SOS_PHONE_NUMBER, messageBody);
+
+    // 4. Store emergency description and coordinates locally in IndexedDB (zero internet needed)
+    saveSosDispatchOffline({
+      description: description.trim() || 'Urgent emergency assistance requested',
+      latitude: location?.latitude,
+      longitude: location?.longitude,
+      accuracy: location?.accuracy,
+      timestamp: location?.timestamp || new Date().toLocaleTimeString(),
+      recipients: selectedRecipient || SOS_PHONE_NUMBER,
+      message_body: messageBody,
+    }).catch((err) => console.warn('Could not archive SOS locally in IndexedDB:', err));
 
     // Prevent accidental double clicks
     setIsCooldown(true);
@@ -425,9 +438,38 @@ Please provide emergency assistance.`
               <span>SEND EMERGENCY SMS</span>
             </button>
 
-            <div className="flex items-center justify-between text-[11px] text-[#64748B] px-1">
-              <span>Emergency Recipient: <strong className="font-mono text-[#111827]">{SOS_PHONE_NUMBER}</strong></span>
-              <span className="font-semibold text-[#047857]">Zero Internet Needed</span>
+            <div className="flex flex-col gap-1.5 text-[11px] text-[#64748B] px-1">
+              <div className="flex items-center justify-between">
+                <span>Emergency Recipients:</span>
+                <span className="font-semibold text-[#047857]">Zero Internet Needed</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRecipient(SOS_PHONE_NUMBERS.join(','))}
+                  className={`px-2 py-0.5 rounded-md border text-xs font-mono font-bold transition ${
+                    selectedRecipient === SOS_PHONE_NUMBERS.join(',')
+                      ? 'bg-[#0F766E] text-white border-[#0F766E] shadow-2xs'
+                      : 'bg-white text-[#111827] border-[#E5E7EB] hover:bg-[#F9FAFB]'
+                  }`}
+                >
+                  Both Numbers ({SOS_PHONE_NUMBERS.length})
+                </button>
+                {SOS_PHONE_NUMBERS.map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => setSelectedRecipient(num)}
+                    className={`px-2 py-0.5 rounded-md border text-xs font-mono font-bold transition ${
+                      selectedRecipient === num
+                        ? 'bg-[#0F766E] text-white border-[#0F766E] shadow-2xs'
+                        : 'bg-white text-[#111827] border-[#E5E7EB] hover:bg-[#F9FAFB]'
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {smsStatusMessage && (

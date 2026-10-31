@@ -1,7 +1,7 @@
 import { Incident, Report, AuditLog, TrackingResponse } from '../types';
 import { getAdminToken, removeAdminSession } from './auth';
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function getAuthHeaders(): HeadersInit {
   const token = getAdminToken();
