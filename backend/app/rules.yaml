@@ -1,0 +1,112 @@
+version: "1.0"
+metadata:
+  name: "ARES Prioritization & Incident Engine"
+  description: "Rules, weights, thresholds, and disaster definitions for triage without hardcoded logic"
+
+# Disaster types defined declaratively so new types need no code changes
+disaster_types:
+  flood:
+    label: "Flood / Water Intrusion"
+    severity_base: 3.5
+    default_hazards: ["deep water", "rapid current", "electrical risk", "submerged roads"]
+    color: "#2563eb"
+  cyclone:
+    label: "Cyclone / Severe Storm"
+    severity_base: 4.0
+    default_hazards: ["flying debris", "fallen trees", "high winds", "roof collapse"]
+    color: "#7c3aed"
+  earthquake:
+    label: "Earthquake / Seismic"
+    severity_base: 4.5
+    default_hazards: ["structural cracks", "rubble", "aftershocks", "gas leaks"]
+    color: "#d97706"
+  landslide:
+    label: "Landslide / Mudflow"
+    severity_base: 4.0
+    default_hazards: ["road blockage", "soil instability", "buried structures"]
+    color: "#b45309"
+  fire:
+    label: "Fire / Wildfire"
+    severity_base: 4.5
+    default_hazards: ["flames", "toxic smoke", "explosions", "heat radiation"]
+    color: "#dc2626"
+
+# Duplicate Merging Thresholds
+merging:
+  distance_meters: 250.0        # Reports within 250m can be merged
+  time_window_hours: 6.0        # Reports within 6 hours can be merged
+  image_hash_hamming_threshold: 8 # Hamming distance <= 8 indicates near-identical photo
+  text_similarity_threshold: 0.50 # Jaccard / Token overlap or embedding similarity
+
+# Prioritization Rules (Calculates urgency 0-100 & levels: CRITICAL, HIGH, MEDIUM, LOW)
+priority:
+  base_weight: 15.0
+  severity_weight: 5.0          # Multiplied by AI severity 1-5 (max 25)
+  hazard_threat_to_life:
+    "submerged roads": 10.0
+    "deep water": 15.0
+    "rapid current": 18.0
+    "roof collapse": 20.0
+    "structural cracks": 15.0
+    "rubble": 15.0
+    "gas leaks": 22.0
+    "flames": 22.0
+    "toxic smoke": 18.0
+    "downed power lines": 18.0
+  people_at_risk_scale:
+    single: 5.0                 # 1-3 people
+    group: 15.0                 # 4-10 people
+    crowd: 25.0                 # 11+ people
+  vulnerable_groups_multiplier: 1.25  # Children, elderly, disabled mentioned
+  urgent_needs_weights:
+    medical: 20.0
+    rescue: 22.0
+    water: 8.0
+    food: 6.0
+    shelter: 8.0
+  critical_infrastructure_bonus:
+    hospital: 15.0
+    school: 12.0
+    shelter: 10.0
+  blocked_access_bonus: 10.0
+  time_staleness:
+    hours_escalation_cap: 12.0  # Older unaddressed reports gradually escalate priority
+    escalation_per_hour: 1.5
+
+# Confidence Rules (Calculates verification 0.0 - 1.0 & levels: HIGH, MEDIUM, LOW)
+confidence:
+  base_score: 0.20
+  photo_present_and_matched: 0.35
+  gps_location: 0.25            # Automatic GPS / EXIF GPS
+  approximate_location: 0.10    # Manual map pin / typed locality
+  corroboration_bonus_per_report: 0.15 # Max cap 0.30
+  corroboration_cap: 0.30
+  consistency_bonus: 0.10       # Image, text, and location are mutually consistent
+  
+  # Penalties
+  missing_photo_penalty: -0.25  # Lowers confidence ONLY, NEVER lowers priority!
+  reused_image_penalty: -0.35   # Image matches an older unrelated event
+  metadata_mismatch_penalty: -0.20
+
+# Safety Overrides: Any single occurrence immediately forces Priority to CRITICAL (score >= 90)
+safety_overrides:
+  enabled: true
+  override_priority: "CRITICAL"
+  min_priority_score: 92.0
+  danger_phrases:
+    - "person trapped"
+    - "trapped"
+    - "trapped under debris"
+    - "trapped in water"
+    - "fire near homes"
+    - "fire spreading"
+    - "structural collapse"
+    - "building collapse"
+    - "people drowning"
+    - "drowning"
+    - "gas leak"
+    - "babies trapped"
+    - "infant stranded"
+    - "heart attack"
+    - "unconscious"
+    - "severe bleeding"
