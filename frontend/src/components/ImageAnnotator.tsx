@@ -70,11 +70,21 @@ export const ImageAnnotator: React.FC<ImageAnnotatorProps> = ({
     );
   }
 
+  // Filter out invalid or legacy mock bounding boxes (e.g. [150, 120, 580, 840])
+  const validBoxes = (boxes || []).filter((b) => {
+    if (!b || !b.box_2d || b.box_2d.length !== 4) return false;
+    const [ymin, xmin, ymax, xmax] = b.box_2d;
+    if (ymin === 150 && xmin === 120 && ymax === 580 && xmax === 840) return false;
+    if (ymin === 610 && xmin === 300 && ymax === 890 && xmax === 720) return false;
+    if (b.label?.startsWith('Primary ') && b.label?.endsWith(' impact zone')) return false;
+    return true;
+  });
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
-          Visual Evidence & AI Detections ({boxes.length} bounding boxes)
+          Visual Evidence & AI Detections ({validBoxes.length} bounding boxes)
         </span>
         <button
           onClick={() => setShowBoxes(!showBoxes)}
@@ -94,7 +104,7 @@ export const ImageAnnotator: React.FC<ImageAnnotatorProps> = ({
         />
 
         {showBoxes &&
-          boxes.map((b, idx) => {
+          validBoxes.map((b, idx) => {
             const [ymin, xmin, ymax, xmax] = b.box_2d;
             // Bounding box coords normalized 0-1000
             const top = `${(ymin / 1000) * 100}%`;
@@ -123,7 +133,7 @@ export const ImageAnnotator: React.FC<ImageAnnotatorProps> = ({
       </div>
 
       {/* Detected Hazards & Danger Phrases chips */}
-      <div className="flex flex-wrap gap-1.5 mt-1">
+      <div className="flex flex-wrap items-center gap-1.5 mt-1">
         {dangerPhrases.map((phrase, i) => (
           <span
             key={i}
@@ -141,6 +151,11 @@ export const ImageAnnotator: React.FC<ImageAnnotatorProps> = ({
             {h}
           </span>
         ))}
+        {hazards.length === 0 && dangerPhrases.length === 0 && (
+          <span className="text-[11px] text-slate-500 italic">
+            No active physical hazards identified
+          </span>
+        )}
       </div>
     </div>
   );

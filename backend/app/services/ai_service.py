@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import logging
 from typing import Optional, Dict, Any, List
 from google import genai
@@ -15,17 +16,28 @@ logger = logging.getLogger(__name__)
 GEMINI_SYSTEM_INSTRUCTION = """
 You are an expert emergency disaster triage AI for First Responders.
 Analyze the disaster report (photo and/or text description and location).
+
 CRITICAL RULES:
-1. Do not invent missing information or turn vague claims into unsupported facts.
-2. If information is not available, state 'Not reported' or 'Unknown'.
-3. The 'what_happened' summary MUST be a concise, factual 1-2 sentence description strictly preserving the original user meaning without hallucination.
-4. Clearly distinguish directly stated facts from inferred visual hazards.
+1. STRICT NEGATIVE-CLASS & ANTI-HALLUCINATION VERIFICATION:
+   - If the image depicts an everyday indoor/outdoor scene, an electronic device (laptop, computer monitor, mobile phone, tablet screen), a document, paper, a selfie, a vehicle in normal undamaged state, pets, undamaged furniture, or ANY scene WITHOUT visual evidence of disaster damage:
+     * 'evidence_boxes' MUST BE AN EMPTY LIST []. NEVER draw bounding boxes on screens, keyboards, windows, furniture, documents, or undamaged structures.
+     * 'visible_hazards' MUST BE AN EMPTY LIST [] (unless a specific hazard is directly stated in the user text, and even then, mark it as text-reported only).
+     * In 'consistency_note', explicitly state that the photo does NOT exhibit any disaster damage or physical hazard (e.g., "Photo depicts an electronic screen / indoor room with no visible signs of fire, smoke, flood, earthquake damage, or physical hazards.").
+     * Lower 'confidence' to <= 0.25 if the visual evidence contradicts or fails to corroborate a reported disaster.
+     * If both text and image lack disaster evidence, classify 'disaster_type' as 'other' and 'severity' as 1.
+2. DO NOT INVENT HAZARDS:
+   - NEVER assume or output default hazards like 'active flames', 'dense particulate smoke', 'deep standing water', or 'cracked masonry' unless they are clearly, unambiguously visible in the photo or explicitly stated by the reporter.
+3. BOUNDING BOXES:
+   - Only output bounding boxes in 'evidence_boxes' if there is genuine, verified, physical disaster phenomena visible in the photo (e.g., open active flames, heavy smoke plume rising from a fire, deep standing water submerging streets/vehicles, collapsed building sections, or active landslides).
+   - If no disaster damage is present in the photo, 'evidence_boxes' MUST be [].
+4. The 'what_happened' summary MUST be a concise, factual 1-2 sentence description strictly preserving the original user meaning without hallucination.
+5. If information is not available, state 'Not reported' or 'Unknown'.
 
 You MUST respond with valid JSON matching the required schema:
-- disaster_type: One of 'flood', 'cyclone', 'earthquake', 'landslide', 'fire'. If uncertain, classify the closest hazard.
+- disaster_type: One of 'flood', 'cyclone', 'earthquake', 'landslide', 'fire', or 'other'. If uncertain or non-disaster, classify as 'other'.
 - what_happened: Concise, factual 1-2 sentence synopsis of the actual event.
-- visible_hazards: List of specific visible or described physical hazards (e.g., 'rapid current', 'downed power line', 'cracked masonry', 'toxic smoke', 'submerged vehicle').
-- severity: Integer 1 (minor nuisance) to 5 (catastrophic structural/life threat).
+- visible_hazards: List of specific visible or described physical hazards. Empty list [] if none verified.
+- severity: Integer 1 (minor nuisance / no damage) to 5 (catastrophic structural/life threat).
 - confidence: Float 0.0 to 1.0 representing your assessment certainty.
 - people_at_risk: Count of individuals directly identified at risk (use 0 if not explicitly mentioned).
 - urgent_needs: List from ['medical', 'rescue', 'water', 'food', 'shelter', 'evacuation'].
@@ -34,7 +46,7 @@ You MUST respond with valid JSON matching the required schema:
 - language: ISO 639-1 code of original report text (e.g., 'es', 'hi', 'fr', 'en').
 - english_translation: Faithful English translation of the user's description.
 - consistency_note: A brief analytical critique assessing whether the photo evidence, textual claims, and reported environment are consistent or contradictory.
-- evidence_boxes: List of bounding boxes [ymin, xmin, ymax, xmax] normalized 0-1000 highlighting physical damage or hazards in the photo.
+- evidence_boxes: List of bounding boxes [ymin, xmin, ymax, xmax] normalized 0-1000 highlighting physical damage or hazards in the photo. Empty list [] if no hazards.
 """
 
 def analyze_with_gemini(
@@ -59,7 +71,9 @@ def analyze_with_gemini(
         prompt_parts: List[Any] = [
             f"User Description: {text_description or 'No text description provided.'}\n"
             f"Location Context: {location_summary or 'Unspecified coordinates'}\n\n"
-            "Analyze the above emergency situation and photo. Identify all hazards, urgency, and bounding boxes."
+            "Analyze the situation objectively based on the photo and description.\n"
+            "Determine if there is genuine disaster damage or hazards.\n"
+            "CRITICAL: If the photo shows an indoor scene, computer/phone screen, document, or non-disaster subject with NO flames, smoke, water, or damage, return empty lists [] for evidence_boxes and visible_hazards, and explain the discrepancy in consistency_note."
         ]
 
         if image_bytes:
@@ -104,8 +118,25 @@ def get_cached_or_analyze(
         try:
             cached = db.query(CachedAIResult).filter(CachedAIResult.image_phash == image_phash).first()
             if cached and cached.result_json:
+                res_data = dict(cached.result_json)
+                # Check for and purge legacy mock boxes or legacy fake hazards
+                boxes = res_data.get("evidence_boxes", [])
+                has_legacy_mock = any(
+                    b.get("box_2d") in ([150, 120, 580, 840], [610, 300, 890, 720])
+                    or ("Primary " in b.get("label", "") and " impact zone" in b.get("label", ""))
+                    for b in boxes if isinstance(b, dict)
+                )
+                if has_legacy_mock:
+                    res_data["evidence_boxes"] = [
+                        b for b in boxes if isinstance(b, dict) 
+                        and b.get("box_2d") not in ([150, 120, 580, 840], [610, 300, 890, 720])
+                        and not ("Primary " in b.get("label", "") and " impact zone" in b.get("label", ""))
+                    ]
+                    cached.result_json = res_data
+                    db.commit()
+
                 logger.info(f"AI result cache hit for image hash {image_phash}")
-                return GeminiAnalysisOutput(**cached.result_json)
+                return GeminiAnalysisOutput(**res_data)
         except Exception as e:
             logger.warning(f"Error checking AI cache: {e}")
         finally:
@@ -140,21 +171,28 @@ def generate_mock_analysis(
 ) -> GeminiAnalysisOutput:
     """
     Intelligent offline emergency triage analyzer used when GEMINI_API_KEY is not set.
-    Ensures seamless hackathon demos and offline resilience.
+    Ensures safe triage without hallucinating bounding boxes or unverified hazards.
     """
-    desc = (text_description or "").lower()
+    desc = (text_description or "").lower().strip()
     
-    # 1. Determine disaster type
-    disaster_type = "flood"
-    if any(k in desc for k in ["fire", "smoke", "flame", "burning", "blaze"]):
+    # 0. Check for explicit negation (e.g. "no fire", "not a fire", "no smoke", "false alarm")
+    is_negated_fire = bool(re.search(r'\b(no|not|neither|without|never|false)\s+(?:visible\s+|active\s+)?(fire|flames?|smoke|blaze|burn)\b', desc))
+    is_negated_flood = bool(re.search(r'\b(no|not|neither|without|never|false)\s+(?:visible\s+|active\s+)?(flood|water|submerged|leak)\b', desc))
+    is_negated_quake = bool(re.search(r'\b(no|not|neither|without|never|false)\s+(?:visible\s+|active\s+)?(quake|shake|rubble|collapse|crack)\b', desc))
+    is_negated_cyclone = bool(re.search(r'\b(no|not|neither|without|never|false)\s+(?:visible\s+|active\s+)?(cyclone|storm|wind|hurricane)\b', desc))
+    is_negated_landslide = bool(re.search(r'\b(no|not|neither|without|never|false)\s+(?:visible\s+|active\s+)?(landslide|mud|slope)\b', desc))
+
+    # 1. Determine disaster type with negation awareness
+    disaster_type = "other"
+    if not is_negated_fire and any(k in desc for k in ["fire", "flame", "burning", "blaze", "wildfire"]):
         disaster_type = "fire"
-    elif any(k in desc for k in ["quake", "shake", "rubble", "collapse", "cracked"]):
+    elif not is_negated_quake and any(k in desc for k in ["quake", "earthquake", "aftershock", "tremor", "rubble", "collapse"]):
         disaster_type = "earthquake"
-    elif any(k in desc for k in ["cyclone", "storm", "hurricane", "tornado", "wind"]):
+    elif not is_negated_cyclone and any(k in desc for k in ["cyclone", "hurricane", "tornado", "typhoon", "extreme wind", "storm"]):
         disaster_type = "cyclone"
-    elif any(k in desc for k in ["landslide", "mud", "soil", "slope"]):
+    elif not is_negated_landslide and any(k in desc for k in ["landslide", "mudslide", "rockfall", "slope failure"]):
         disaster_type = "landslide"
-    elif any(k in desc for k in ["flood", "water", "submerged", "river", "drowning", "leak"]):
+    elif not is_negated_flood and any(k in desc for k in ["flood", "submerged", "overflow", "drowning", "rising water"]):
         disaster_type = "flood"
 
     # 2. Extract danger phrases
@@ -181,17 +219,16 @@ def generate_mock_analysis(
         urgent_needs.append("shelter")
 
     # 4. Severity & People at risk
-    severity = 3
+    severity = 1 if disaster_type == "other" else 2
     if danger_phrases or "collapse" in desc or "fatal" in desc:
         severity = 5
-    elif any(w in desc for w in ["heavy", "deep", "massive", "severe", "critical"]):
+    elif any(w in desc for w in ["heavy", "deep", "massive", "severe", "critical", "out of control"]):
         severity = 4
-    elif any(w in desc for w in ["minor", "small", "shallow"]):
-        severity = 2
+    elif any(w in desc for w in ["medium", "moderate", "expanding"]):
+        severity = 3
 
     # Do not invent population numbers; default to 0 (Unknown) unless explicitly mentioned
     people_at_risk = 0
-    import re
     num_match = re.search(r'\b(\d+)\s*(people|persons|residents|children|occupants|civilians|victims)\b', desc)
     if num_match:
         try:
@@ -205,48 +242,74 @@ def generate_mock_analysis(
     elif any(w in desc for w in ["person trapped", "someone trapped", "elderly trapped", "baby", "infant"]):
         people_at_risk = 1
 
-    # 5. Visible hazards
-    hazards_by_type = {
-        "flood": ["deep standing water", "submerged roadway", "water current hazard"],
-        "fire": ["active flames", "dense particulate smoke", "combustible fuel risk"],
-        "earthquake": ["structural masonry fissure", "unstable overhang", "rubble obstruction"],
-        "cyclone": ["high wind projectile hazard", "fallen utility lines", "roof debris"],
-        "landslide": ["unstable earth embankment", "blocked access conduit", "mud flow"]
-    }
-    visible_hazards = hazards_by_type.get(disaster_type, ["structural instability"])
+    # 5. Visible hazards (ONLY extract hazards affirmatively mentioned in text)
+    visible_hazards = []
+    hazard_keyword_map = [
+        ("flames", "active flames", is_negated_fire),
+        ("flame", "active flames", is_negated_fire),
+        ("blaze", "active fire", is_negated_fire),
+        ("smoke", "dense smoke", is_negated_fire),
+        ("gas leak", "combustible gas leak", False),
+        ("fuel", "combustible fuel risk", False),
+        ("deep water", "deep standing water", is_negated_flood),
+        ("submerged", "submerged infrastructure", is_negated_flood),
+        ("rapid current", "rapid water current", is_negated_flood),
+        ("fissure", "structural masonry fissure", is_negated_quake),
+        ("crack", "structural fissure", is_negated_quake),
+        ("rubble", "rubble obstruction", is_negated_quake),
+        ("downed power line", "downed utility lines", False),
+        ("power line", "downed utility lines", False),
+        ("live wire", "electrical hazard", False),
+        ("mud flow", "mud flow", is_negated_landslide),
+        ("slope failure", "unstable earth embankment", is_negated_landslide),
+    ]
+    for kw, label, is_neg in hazard_keyword_map:
+        if not is_neg and kw in desc and label not in visible_hazards:
+            visible_hazards.append(label)
 
     # 6. Consistency Note
-    if image_bytes and text_description:
-        consistency_note = "High visual-textual concordance: photographic damage correlates directly with reported hazards."
+    if image_bytes and disaster_type == "other":
+        consistency_note = "Visual asset received without confirmed disaster hazards. Automated bounding boxes and hazard tags disabled to prevent false detections."
+    elif image_bytes and visible_hazards:
+        consistency_note = f"Visual asset received alongside reported {disaster_type} hazards. Computer vision verification pending responder review; bounding boxes omitted."
+    elif image_bytes:
+        consistency_note = "Visual asset received. No overt disaster hazards identified in report description; bounding boxes omitted to prevent false alarms."
     elif not image_bytes:
         consistency_note = "Text-only dispatch report: visual verification pending citizen photo follow-up."
     else:
-        consistency_note = "Visual-only report: hazard features detected directly from photo analysis."
+        consistency_note = "Report received; visual and textual verification pending dispatcher review."
 
-    # 7. What Happened (concise, factual synopsis strictly from description)
+    # 7. What Happened (concise, factual synopsis strictly preserving original meaning)
     if text_description and text_description.strip():
         what_happened = text_description.strip()
+    elif image_bytes and disaster_type != "other":
+        what_happened = f"Citizen submitted visual evidence regarding potential {disaster_type} incident."
     elif image_bytes:
-        what_happened = f"Citizen submitted visual evidence of {disaster_type}; physical hazards identified via photographic analysis."
+        what_happened = "Citizen submitted photo evidence; visual inspection pending responder triage."
     else:
         what_happened = "Emergency report filed without detailed text description."
 
-    # 8. Mock evidence bounding boxes
-    boxes = []
-    if image_bytes:
-        boxes = [
-            BoundingBox(box_2d=[150, 120, 580, 840], label=f"Primary {disaster_type} impact zone"),
-            BoundingBox(box_2d=[610, 300, 890, 720], label=visible_hazards[0])
-        ]
+    # 8. Evidence bounding boxes - NEVER fabricate boxes in offline / mock mode
+    boxes: List[BoundingBox] = []
+
+    # 9. Confidence calculation
+    if disaster_type == "other":
+        confidence = 0.20
+    elif image_bytes and visible_hazards:
+        confidence = 0.65
+    elif image_bytes:
+        confidence = 0.45
+    else:
+        confidence = 0.50
 
     return GeminiAnalysisOutput(
         disaster_type=disaster_type,
         what_happened=what_happened,
         visible_hazards=visible_hazards,
         severity=severity,
-        confidence=0.85 if image_bytes else 0.50,
+        confidence=confidence,
         people_at_risk=people_at_risk,
-        urgent_needs=urgent_needs or ["rescue"],
+        urgent_needs=urgent_needs or (["rescue"] if severity >= 4 else []),
         danger_phrases=danger_phrases,
         report_source="citizen",
         language="en",

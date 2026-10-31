@@ -146,6 +146,7 @@ export const PriorityList: React.FC<PriorityListProps> = ({
             <option value="earthquake">Earthquake</option>
             <option value="cyclone">Cyclone</option>
             <option value="landslide">Landslide</option>
+            <option value="other">Other / Uncategorized</option>
           </select>
 
           {/* Status Filter */}

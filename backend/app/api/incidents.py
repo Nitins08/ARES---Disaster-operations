@@ -34,14 +34,27 @@ def to_incident_response(inc: Incident) -> IncidentResponse:
         primary = inc.reports[0]
         what_happened = primary.english_translation or primary.raw_description
     if not what_happened:
-        what_happened = f"Emergency incident reported. Visual analysis identified {inc.disaster_type} hazards."
+        if inc.disaster_type and inc.disaster_type != "other":
+            what_happened = f"Emergency incident reported for {inc.disaster_type}."
+        else:
+            what_happened = "Emergency incident reported. Awaiting detailed triage."
 
     # Report source
     source = getattr(inc, "report_source", None) or "Citizen"
     if inc.reports and getattr(inc.reports[0], "is_reporting_for_other", False):
         source = "Citizen (Reporting on behalf of victims)"
 
+    # Clean legacy mock boxes to prevent phantom hazard boxes on incident reviews
+    raw_boxes = inc.evidence_boxes or []
+    cleaned_boxes = [
+        b for b in raw_boxes 
+        if isinstance(b, dict) 
+        and b.get("box_2d") not in ([150, 120, 580, 840], [610, 300, 890, 720])
+        and not ("Primary " in b.get("label", "") and " impact zone" in b.get("label", ""))
+    ]
+
     resp = IncidentResponse.model_validate(inc)
+    resp.evidence_boxes = cleaned_boxes
     resp.what_happened = what_happened
     resp.verification_status = v_status
     resp.report_source = source

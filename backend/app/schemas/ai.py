@@ -10,8 +10,8 @@ class BoundingBox(BaseModel):
 
 class GeminiAnalysisOutput(BaseModel):
     disaster_type: str = Field(
-        default="flood", 
-        description="Primary disaster category: flood, cyclone, earthquake, landslide, or fire"
+        default="other", 
+        description="Primary disaster category: flood, cyclone, earthquake, landslide, fire, or other"
     )
     visible_hazards: List[str] = Field(
         default_factory=list, 

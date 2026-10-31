@@ -230,8 +230,15 @@ class IncidentMergingService:
                 getattr(ai_output, "what_happened", None) 
                 or report.english_translation 
                 or report.raw_description 
-                or f"Citizen filed emergency report. Visual analysis identified {ai_output.disaster_type} hazards."
+                or (f"Citizen filed emergency report for {ai_output.disaster_type}." if ai_output.disaster_type != "other" else "Citizen filed report for incident review.")
             )
+
+            # Sanitize evidence boxes to prevent saving legacy mock boxes
+            clean_boxes = [
+                b.model_dump() for b in ai_output.evidence_boxes
+                if b.box_2d not in ([150, 120, 580, 840], [610, 300, 890, 720])
+                and not ("Primary " in b.label and " impact zone" in b.label)
+            ]
 
             new_incident = Incident(
                 disaster_type=ai_output.disaster_type,
@@ -249,7 +256,7 @@ class IncidentMergingService:
                 urgent_needs=ai_output.urgent_needs,
                 visible_hazards=ai_output.visible_hazards,
                 danger_phrases=ai_output.danger_phrases,
-                evidence_boxes=[b.model_dump() for b in ai_output.evidence_boxes],
+                evidence_boxes=clean_boxes,
                 primary_image_url=report.image_url,
                 corroboration_count=1,
                 merge_reasons=[],

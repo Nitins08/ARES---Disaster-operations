@@ -142,6 +142,7 @@ export const ConsolePage: React.FC<ConsolePageProps> = ({ role }) => {
                   <option value="earthquake">Earthquake</option>
                   <option value="cyclone">Cyclone</option>
                   <option value="landslide">Landslide</option>
+                  <option value="other">Other / Uncategorized</option>
                 </select>
 
                 <select
